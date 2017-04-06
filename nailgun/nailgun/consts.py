@@ -104,6 +104,7 @@ DEFAULT_BRIDGES_NAMES = Enum(
     'br-aux',
     'br-baremetal',
     'br-ironic',
+    'br-bm-phy',
     names=(
         'br_fw_admin',
         'br_storage',
@@ -115,7 +116,8 @@ DEFAULT_BRIDGES_NAMES = Enum(
         'br_mesh',
         'br_aux',
         'br_baremetal',
-        'br_ironic'
+        'br_ironic',
+        'br_bm_phy'
     )
 )
 
@@ -259,7 +261,12 @@ TASK_NAMES = Enum(
     'deployment',
     'provision',
     'stop_deployment',
+    # reset_environment supertask contains three subtasks:
+    # reset_nodes, remove_keys and remove_ironic_bootstrap
     'reset_environment',
+    'reset_nodes',
+    'remove_keys',
+    'remove_ironic_bootstrap',
     'update',
     'spawn_vms',
 
@@ -308,8 +315,7 @@ CLUSTER_CHANGES = Enum(
     'networks',
     'attributes',
     'disks',
-    'interfaces',
-    'vmware_attributes'
+    'interfaces'
 )
 
 PROVISION_METHODS = Enum(
@@ -513,6 +519,8 @@ DEFAULT_DEPLOYMENT_GRAPH_TYPE = 'default'
 DEFAULT_HUGEPAGE_SIZE = '2048'
 HUGE_PAGES_SIZE_MAP = [('2048', '2M'), ('1048576', '1G')]
 DPDK_OVS_CORE_CPUS = 1
+# minimal RAM amount for OVS+DPDK in MB
+MIN_DPDK_HUGEPAGES_MEMORY = 1024
 
 MEMORY_RESERVED_FOR_OPERATING_SYSTEM = 1024 ** 3  # one GiB in bytes
 
@@ -522,3 +530,11 @@ HYPERVISORS = Enum(
 )
 
 DPDK_DRIVER_IN_SRIOV_CASE = 'vfio-pci'
+
+DEFAULT_MTU = 1500
+
+SIZE_OF_VLAN_TAG = 4
+
+SERIALIZATION_POLICY = Enum(
+    'distributed'
+)

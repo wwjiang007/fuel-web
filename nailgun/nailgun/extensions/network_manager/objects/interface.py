@@ -90,6 +90,16 @@ class NIC(DPDKMixin, NailgunObject):
         return None
 
     @classmethod
+    def get_dpdk_queues_count(cls, instance):
+        dpdk_cpu_pinning = utils.get_in(instance.node.attributes,
+                                        'cpu_pinning', 'dpdk', 'value') or 0
+        max_queues = utils.get_in(instance.meta, 'max_queues') or 0
+        # Number CPU for ovs_pmd_core_mask equals number DPDK CPU pinning - 1
+        # 1 CPU is needed for ovs_core_mask
+        pmd_core_count = dpdk_cpu_pinning - 1 if dpdk_cpu_pinning > 0 else 0
+        return min(max_queues, pmd_core_count)
+
+    @classmethod
     def dpdk_available(cls, instance, dpdk_drivers):
         """Checks availability of DPDK for given interface.
 
@@ -340,7 +350,8 @@ class NIC(DPDKMixin, NailgunObject):
                     'dpdk', {}).get('available', False)
             },
             'pci_id': interface_properties.get('pci_id', ''),
-            'numa_node': interface_properties.get('numa_node')
+            'numa_node': interface_properties.get('numa_node'),
+            'max_queues': interface_properties.get('max_queues')
         }
 
 

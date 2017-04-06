@@ -465,7 +465,7 @@ class TestNodeObject(BaseIntegrationTest):
         node2_db = self.env.create_node()
         objects.Node.remove_from_cluster(node_db)
         self.db().refresh(config)
-        self.assertEqual(node_db.cluster_id, None)
+        self.assertIsNone(node_db.cluster_id)
         self.assertEqual(node_db.roles, [])
         self.assertEqual(node_db.pending_roles, [])
         self.assertFalse(config.is_active)
@@ -1098,6 +1098,7 @@ class TestClusterObject(BaseTestCase):
         super(TestClusterObject, self).setUp()
         self.cluster = self.env.create(
             cluster_kwargs={'net_provider': 'neutron'},
+            release_kwargs={'version': 'newton-10.0', 'api': False},
             nodes_kwargs=[
                 {'roles': ['controller']},
                 {'roles': ['controller']},
@@ -1240,6 +1241,10 @@ class TestClusterObject(BaseTestCase):
             controller.group_id,
             objects.Cluster.get_common_node_group(self.cluster,
                                                   ['controller']).id)
+        self.assertEqual(
+            controller.group_id,
+            objects.Cluster.get_common_node_group(self.cluster,
+                                                  ['neutron']).id)
 
     def test_get_node_group_multiple_return_same_group(self):
         group_id = self.env.create_node_group().json_body['id']
@@ -1499,27 +1504,6 @@ class TestClusterObject(BaseTestCase):
                           u'common': {u'libvirt_type': {u'value': u'test'}}},
              'cluster': {u'net_provider': u'test_provider'}}
         )
-
-    def test_cluster_has_compute_vmware_changes(self):
-        cluster = self.env.create_cluster(api=False)
-        ready_compute_vmware_node = self.env.create_node(
-            cluster_id=cluster.id,
-            roles=['compute-vmware'],
-            status=consts.NODE_STATUSES.ready
-        )
-        self.env.create_node(cluster_id=cluster.id, pending_addition=True,
-                             pending_roles=['controller'])
-        self.assertFalse(objects.Cluster.has_compute_vmware_changes(cluster))
-
-        pending_compute_vmware_node = self.env.create_node(
-            cluster_id=cluster.id,
-            pending_roles=["compute-vmware"]
-        )
-        self.assertTrue(objects.Cluster.has_compute_vmware_changes(cluster))
-        objects.Node.delete(pending_compute_vmware_node)
-        objects.Node.update(
-            ready_compute_vmware_node, {'pending_deletion': True})
-        self.assertTrue(objects.Cluster.has_compute_vmware_changes(cluster))
 
     def test_enable_settings_by_components(self):
         components = [{
@@ -1879,6 +1863,7 @@ class TestClusterObjectGetNetworkManager(BaseTestCase):
             ('2014.2.2-6.1', neutron.NeutronManager61),
             ('2015.6.7-7.0', neutron.NeutronManager70),
             ('2016.1.1-8.0', neutron.NeutronManager80),
+            ('mitaka-9.0', neutron.NeutronManager90)
         ):
             self.check_neutron_network_manager(
                 consts.CLUSTER_NET_PROVIDERS.neutron,
@@ -2167,3 +2152,16 @@ class TestNodeStatus(BaseTestCase):
         self.assertEqual(
             consts.NODE_STATUSES.error, objects.Node.get_status(node)
         )
+
+
+class TestPlugin(BaseTestCase):
+
+    def test_name_unchangeable(self):
+        self.env.create_plugin(
+            name='name',
+            package_version='4.0.0',
+            fuel_version=['9.2']
+        )
+        plugin = objects.PluginCollection.all()[0]
+        self.assertRaises(errors.InvalidData, objects.Plugin.update,
+                          plugin, {'name': 'new_name'})

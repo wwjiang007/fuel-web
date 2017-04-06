@@ -83,7 +83,13 @@ class TestPluginBase(base.BaseTestCase):
         """Should return set of all versions this plugin is applicable to"""
         self.assertEqual(
             self.plugin_adapter.plugin_release_versions,
-            set(['2014.2-6.0', '2015.1-8.0', 'mitaka-9.0', 'newton-10.0'])
+            set([
+                '2014.2-6.0',
+                '2015.1-8.0',
+                'mitaka-9.0',
+                'newton-10.0',
+                'ocata-11.0'
+            ])
         )
 
     def test_full_name(self):
@@ -159,6 +165,12 @@ class TestPluginBase(base.BaseTestCase):
             for key, val in six.iteritems(plugin_metadata):
                 self.assertEqual(
                     getattr(self.plugin, key), val)
+
+    def test_tags_saved_on_plugins_update(self):
+        Plugin.update(self.plugin,
+                      {'roles_metadata': self.plugin.roles_metadata})
+        for role, meta in self.plugin.roles_metadata.items():
+            self.assertIn('tags', meta)
 
     def test_get_deployment_tasks(self):
         dg = DeploymentGraph.get_for_model(self.plugin_adapter.plugin)

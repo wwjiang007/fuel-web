@@ -331,7 +331,6 @@ class EnvironmentManager(object):
             'name': 'cluster-api-' + str(randint(0, 1000000)),
         }
         editable_attributes = kwargs.pop('editable_attributes', None)
-        vmware_attributes = kwargs.pop('vmware_attributes', None)
 
         if kwargs:
             cluster_data.update(kwargs)
@@ -364,8 +363,7 @@ class EnvironmentManager(object):
         if editable_attributes:
             Cluster.patch_attributes(cluster_db,
                                      {'editable': editable_attributes})
-        if vmware_attributes:
-            Cluster.update_vmware_attributes(cluster_db, vmware_attributes)
+
         return cluster_db
 
     def create_node(
@@ -1045,6 +1043,10 @@ class EnvironmentManager(object):
                 {'repository_path': 'repositories/ubuntu',
                  'version': 'newton-10.0', 'os': 'ubuntu',
                  'mode': ['ha'],
+                 'deployment_scripts_path': 'deployment_scripts/'},
+                {'repository_path': 'repositories/ubuntu',
+                 'version': 'ocata-11.0', 'os': 'ubuntu',
+                 'mode': ['ha'],
                  'deployment_scripts_path': 'deployment_scripts/'}
             ]
         }
@@ -1069,10 +1071,6 @@ class EnvironmentManager(object):
 
         default_components[0].update(kwargs)
         return default_components
-
-    def get_default_vmware_attributes_metadata(self):
-        return self.read_fixtures(
-            ['openstack'])[0]['fields']['vmware_attributes_metadata']
 
     def upload_fixtures(self, fxtr_names):
         for fxtr_path in self.fxtr_paths_by_names(fxtr_names):
@@ -1448,7 +1446,7 @@ class EnvironmentManager(object):
                              expect_errors)
 
     def _create_network_group(self, expect_errors=False, cluster=None,
-                              **kwargs):
+                              group_id=None, **kwargs):
         if not cluster:
             cluster = self.clusters[0]
         ng = {
@@ -1457,7 +1455,7 @@ class EnvironmentManager(object):
             "vlan_start": 50,
             "cidr": "10.3.0.0/24",
             "gateway": "10.3.0.1",
-            "group_id": Cluster.get_default_group(cluster).id,
+            "group_id": group_id or Cluster.get_default_group(cluster).id,
             "meta": {
                 "notation": consts.NETWORK_NOTATION.cidr,
                 "use_gateway": True,

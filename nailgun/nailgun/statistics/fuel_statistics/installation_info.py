@@ -56,6 +56,16 @@ class InstallationInfo(object):
                       'propagate_task_deploy', None),
         WhiteListRule(('common', 'security_groups', 'value'),
                       'security_groups', None),
+        WhiteListRule(('common', 'serialization_policy', 'value'),
+                      'serialization_policy', None),
+        WhiteListRule(('common', 'ds_use_discover', 'value'),
+                      'ds_use_discover', None),
+        WhiteListRule(('common', 'ds_use_provisioned', 'value'),
+                      'ds_use_provisioned', None),
+        WhiteListRule(('common', 'ds_use_ready', 'value'),
+                      'ds_use_ready', None),
+        WhiteListRule(('common', 'ds_use_error', 'value'),
+                      'ds_use_error', None),
         WhiteListRule(('corosync', 'verified', 'value'),
                       'corosync_verified', None),
 
@@ -105,8 +115,6 @@ class InstallationInfo(object):
                       'volumes_ceph', None),
         WhiteListRule(('storage', 'images_ceph', 'value'),
                       'images_ceph', None),
-        WhiteListRule(('storage', 'images_vcenter', 'value'),
-                      'images_vcenter', None),
         WhiteListRule(('storage', 'ephemeral_ceph', 'value'),
                       'ephemeral_ceph', None),
         WhiteListRule(('storage', 'objects_ceph', 'value'),
@@ -149,6 +157,9 @@ class InstallationInfo(object):
         WhiteListRule(('murano_settings',
                        'murano_glance_artifacts_plugin', 'value'),
                       'murano_glance_artifacts_plugin', None),
+        WhiteListRule(('ironic_settings',
+                       'ironic_provision_network', 'value'),
+                      'ironic_provision_network', None),
 
         WhiteListRule(('workloads_collector', 'enabled', 'value'),
                       'workloads_collector_enabled', None),
@@ -166,17 +177,6 @@ class InstallationInfo(object):
                       'security_networks', None),
         WhiteListRule(('ssh', 'brute_force_protection', 'value'),
                       'brute_force_protection', bool),
-    )
-
-    vmware_attributes_white_list = (
-        # ((path, to, property), 'map_to_name', transform_function)
-        WhiteListRule(('value', 'availability_zones', 'cinder', 'enable'),
-                      'vmware_az_cinder_enable', None),
-        # We add 'vsphere_cluster' into path for enter into nested list.
-        # Private value of 'vsphere_cluster' is not collected, we only
-        # computes length of the nested list
-        WhiteListRule(('value', 'availability_zones', 'nova_computes',
-                       'vsphere_cluster'), 'vmware_az_nova_computes_num', len),
     )
 
     plugin_info_white_list = (
@@ -278,9 +278,6 @@ class InstallationInfo(object):
             release = cluster.release
             nodes_num = NodeCollection.filter_by(
                 None, cluster_id=cluster.id).count()
-            vmware_attributes_editable = None
-            if cluster.vmware_attributes:
-                vmware_attributes_editable = cluster.vmware_attributes.editable
             cluster_info = {
                 'id': cluster.id,
                 'nodes_num': nodes_num,
@@ -297,10 +294,6 @@ class InstallationInfo(object):
                 'attributes': self.get_attributes(
                     Cluster.get_editable_attributes(cluster),
                     self.attributes_white_list
-                ),
-                'vmware_attributes': self.get_attributes(
-                    vmware_attributes_editable,
-                    self.vmware_attributes_white_list
                 ),
                 'plugin_links': self.get_plugin_links(
                     cluster.plugin_links),

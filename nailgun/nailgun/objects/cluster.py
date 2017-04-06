@@ -176,7 +176,6 @@ class Cluster(NailgunObject):
         cls.create_default_group(cluster)
 
         cls.create_attributes(cluster, enabled_editable_attributes)
-        cls.create_vmware_attributes(cluster)
         cls.create_default_extensions(cluster)
 
         # default graph should be created in any case
@@ -184,8 +183,6 @@ class Cluster(NailgunObject):
 
         cls.add_pending_changes(
             cluster, consts.CLUSTER_CHANGES.attributes)
-        cls.add_pending_changes(
-            cluster, consts.CLUSTER_CHANGES.vmware_attributes)
 
         ClusterPlugin.add_compatible_plugins(cluster)
         PluginManager.enable_plugins_by_components(cluster)
@@ -520,8 +517,10 @@ class Cluster(NailgunObject):
             if StrictVersion(ver) == StrictVersion('7.0'):
                 return neutron.NeutronManager70
 
-            if StrictVersion(ver) >= StrictVersion('8.0'):
+            if StrictVersion(ver) == StrictVersion('8.0'):
                 return neutron.NeutronManager80
+            if StrictVersion(ver) >= StrictVersion('9.0'):
+                return neutron.NeutronManager90
 
             return neutron.NeutronManager
         elif net_provider == consts.CLUSTER_NET_PROVIDERS.nova_network:
@@ -869,7 +868,7 @@ class Cluster(NailgunObject):
     @classmethod
     def get_roles_by_tag(cls, tag_name, instance):
         roles = set()
-        for role, meta in six.iteritems(cls.get_own_roles(instance)):
+        for role, meta in six.iteritems(cls.get_roles(instance)):
             if tag_name in meta.get('tags', {}):
                 roles.add(role)
         return roles
@@ -1037,13 +1036,16 @@ class Cluster(NailgunObject):
         return nodegroups[0]
 
     @classmethod
-    def get_node_groups(cls, instance, noderoles):
+    def get_node_groups(cls, instance, nodetags):
         """Returns node groups for given node roles.
 
         :param instance: a Cluster instance
         :param noderoles: a list of node roles
         :returns: a query for list of NodeGroup instances
         """
+        noderoles = set()
+        for tag in nodetags:
+            noderoles.update(cls.get_roles_by_tag(tag, instance) or [tag])
         psql_noderoles = sa.cast(
             psql.array(noderoles),
             psql.ARRAY(sa.String(consts.ROLE_NAME_MAX_SIZE)))
@@ -1330,20 +1332,6 @@ class Cluster(NailgunObject):
         return volumes_metadata
 
     @classmethod
-    def create_vmware_attributes(cls, instance):
-        """Store VmwareAttributes instance into DB."""
-        vmware_metadata = instance.release.vmware_attributes_metadata
-        if vmware_metadata:
-            return VmwareAttributes.create(
-                {
-                    "editable": vmware_metadata.get("editable"),
-                    "cluster_id": instance.id
-                }
-            )
-
-        return None
-
-    @classmethod
     def get_create_data(cls, instance):
         """Return common parameters cluster was created with.
 
@@ -1362,52 +1350,6 @@ class Cluster(NailgunObject):
         data.update(cls.get_network_manager(instance).
                     get_network_config_create_data(instance))
         return data
-
-    @classmethod
-    def get_vmware_attributes(cls, instance):
-        """Get VmwareAttributes instance from DB.
-
-        Now we have relation with cluster 1:1.
-        """
-        return db().query(models.VmwareAttributes).filter(
-            models.VmwareAttributes.cluster_id == instance.id
-        ).first()
-
-    @classmethod
-    def get_default_vmware_attributes(cls, instance):
-        """Get metadata from release with empty value section."""
-        editable = instance.release.vmware_attributes_metadata.get("editable")
-        editable = traverse(
-            editable,
-            formatter_context={'cluster': instance, 'settings': settings},
-            keywords={'generator': AttributesGenerator.evaluate}
-        )
-        return editable
-
-    @classmethod
-    def update_vmware_attributes(cls, instance, data):
-        """Update Vmware attributes.
-
-        Actually we allways update only value section in editable.
-        """
-        metadata = instance.vmware_attributes.editable['metadata']
-        value = data.get('editable', {}).get('value')
-        vmware_attr = {
-            'metadata': metadata,
-            'value': value
-        }
-        setattr(instance.vmware_attributes, 'editable', vmware_attr)
-        cls.add_pending_changes(instance, "vmware_attributes")
-        db().flush()
-        vmware_attr.pop('metadata')
-
-        return vmware_attr
-
-    @classmethod
-    def is_vmware_enabled(cls, instance):
-        """Check if current cluster supports vmware configuration."""
-        attributes = cls.get_editable_attributes(instance)
-        return attributes.get('common', {}).get('use_vcenter', {}).get('value')
 
     @staticmethod
     def adjust_nodes_lists_on_controller_removing(instance, nodes_to_delete,
@@ -1583,31 +1525,6 @@ class Cluster(NailgunObject):
         )
 
     @classmethod
-    def has_compute_vmware_changes(cls, instance):
-        """Checks if any 'compute-vmware' nodes are waiting for deployment.
-
-        :param instance: cluster for checking
-        :type instance: nailgun.db.sqlalchemy.models.Cluster instance
-        """
-        compute_vmware_nodes_query = db().query(models.Node).filter_by(
-            cluster_id=instance.id
-        ).filter(sa.or_(
-            sa.and_(models.Node.roles.any('compute-vmware'),
-                    models.Node.pending_deletion),
-            models.Node.pending_roles.any('compute-vmware')
-        ))
-        return db().query(compute_vmware_nodes_query.exists()).scalar()
-
-    @classmethod
-    def get_operational_vmware_compute_nodes(cls, instance):
-        return db().query(models.Node).filter_by(
-            cluster_id=instance.id
-        ).filter(
-            models.Node.roles.any('compute-vmware'),
-            sa.not_(models.Node.pending_deletion)
-        ).all()
-
-    @classmethod
     def is_task_deploy_enabled(cls, instance):
         """Tests that task based deploy is enabled.
 
@@ -1708,26 +1625,3 @@ class ClusterCollection(NailgunCollection):
 
     #: Single Cluster object class
     single = Cluster
-
-
-class VmwareAttributes(NailgunObject):
-    model = models.VmwareAttributes
-
-    @staticmethod
-    def get_nova_computes_attrs(attributes):
-        return attributes.get('value', {}).get(
-            'availability_zones', [{}])[0].get('nova_computes', [])
-
-    @classmethod
-    def get_nova_computes_target_nodes(cls, instance):
-        """Get data of targets node for all nova computes.
-
-        :param instance: nailgun.db.sqlalchemy.models.Cluster instance
-        :returns: list of dicts that represents nova compute targets
-        """
-        nova_compute_target_nodes = []
-        for nova_compute in cls.get_nova_computes_attrs(instance.editable):
-            target = nova_compute['target_node']['current']
-            if target['id'] != 'controllers':
-                nova_compute_target_nodes.append(target)
-        return nova_compute_target_nodes

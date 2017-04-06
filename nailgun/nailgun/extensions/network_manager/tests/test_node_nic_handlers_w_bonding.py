@@ -320,7 +320,7 @@ class TestNodeNICsBonding(BaseIntegrationTest):
         )
         self.assertEqual(200, resp.status_code)
 
-        self.assertEqual(node.cluster, None)
+        self.assertIsNone(node.cluster)
         resp = self.env.node_nics_get(node.id)
         self.assertEqual(resp.status_code, 200)
 
@@ -341,7 +341,7 @@ class TestNodeNICsBonding(BaseIntegrationTest):
         )
         self.assertEqual(resp.status_code, 200)
 
-        self.assertEqual(node.cluster, None)
+        self.assertIsNone(node.cluster)
         resp = self.env.node_nics_get(node.id)
         self.assertEqual(resp.status_code, 200)
 
@@ -860,8 +860,6 @@ class TestBondAttributesDefaultsHandler(BaseIntegrationTest):
             'value': {
                 'weight': 10,
                 'type': 'select',
-                'value': 'balance-rr',
-                'label': 'Mode',
                 'value': '',
                 'label': 'Mode'
             },
@@ -885,8 +883,7 @@ class TestBondAttributesDefaultsHandler(BaseIntegrationTest):
                 'weight': 20,
                 'type': 'offloading_modes',
                 'value': {},
-                'label': 'Offloading Modes',
-                'description': 'Offloading modes'
+                'label': 'Offloading Modes'
             }
         },
         'mtu': {
@@ -920,7 +917,12 @@ class TestBondAttributesDefaultsHandler(BaseIntegrationTest):
             },
             'metadata': {
                 'label': 'DPDK',
-                'weight': 40
+                'weight': 40,
+                'restrictions': [{
+                    'condition':
+                        "not ('experimental' in version:feature_groups)",
+                    'action': "hide"
+                }]
             }
         },
         'lacp': {
@@ -931,13 +933,6 @@ class TestBondAttributesDefaultsHandler(BaseIntegrationTest):
             'value': {
                 'weight': 10,
                 'type': 'select',
-                'value': '',
-                'label': 'Lacp'
-            }
-        },
-        'lacp_rate': {
-            'metadata': {
-                'weight': 60,
                 'value': '',
                 'label': 'Lacp'
             }

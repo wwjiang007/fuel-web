@@ -38,6 +38,7 @@ from nailgun.test.integration import test_orchestrator_serializer_80
 class TestSerializer90Mixin(object):
     env_version = "mitaka-9.0"
     task_deploy = True
+    dpdk_bridge_provider = consts.NEUTRON_L23_PROVIDERS.ovs
 
     @classmethod
     def create_serializer(cls, cluster):
@@ -67,7 +68,7 @@ class TestSerializer90Mixin(object):
 
     @staticmethod
     def _handle_facts(facts):
-        """Handle deployment facts fro LCM serializers
+        """Handle deployment facts for LCM serializers
 
         As we are running 7.0 tests against 9.0 environments where
         LCM serializer is used it's not expected to have master node
@@ -129,7 +130,8 @@ class TestDeploymentAttributesSerialization90(
 
     @mock.patch('nailgun.objects.Release.get_supported_dpdk_drivers')
     def _check_dpdk_serializing(self, drivers_mock, has_vlan_tag=False,
-                                sriov=False):
+                                sriov=False, max_queues=0,
+                                dpdk_cpu_pinning=0, nic_driver=None):
         drivers_mock.return_value = {
             'driver_1': ['test_id:1', 'test_id:2']
         }
@@ -149,6 +151,11 @@ class TestDeploymentAttributesSerialization90(
 
         self._assign_dpdk_to_nic(node, dpdk_nic, other_nic)
         dpdk_interface_name = dpdk_nic.name
+        dpdk_nic.meta['max_queues'] = max_queues
+        if dpdk_cpu_pinning:
+            node.attributes['cpu_pinning']['dpdk']['value'] = dpdk_cpu_pinning
+        if nic_driver:
+            dpdk_nic.driver = nic_driver
 
         objects.Cluster.prepare_for_deployment(self.cluster_db)
 
@@ -156,7 +163,8 @@ class TestDeploymentAttributesSerialization90(
 
         serialized_for_astute = self.serializer.serialize(
             self.cluster_db, self.cluster_db.nodes)
-        self.assertEqual(len(serialized_for_astute['nodes']), 1)
+        self.assertEqual(len(self._handle_facts(
+            serialized_for_astute['nodes'])), 1)
         serialized_node = serialized_for_astute['nodes'][0]
         dpdk = serialized_node.get('dpdk')
 
@@ -178,6 +186,7 @@ class TestDeploymentAttributesSerialization90(
                            transformations)
         self.assertEqual(private_br.get('vendor_specific'),
                          vendor_specific)
+        self.assertEqual(private_br.get('provider'), self.dpdk_bridge_provider)
         self.assertEqual(len(all_ports) - len(dpdk_ports),
                          len(other_nic.assigned_networks_list))
         self.assertEqual(len(dpdk_ports), 1)
@@ -193,6 +202,15 @@ class TestDeploymentAttributesSerialization90(
         else:
             self.assertEqual(vendor_specific.get('dpdk_driver'), 'driver_1')
 
+        if max_queues > 1 and dpdk_cpu_pinning > 2:
+            self.assertEqual(vendor_specific.get('max_queues'),
+                             min(max_queues, dpdk_cpu_pinning - 1))
+        else:
+            self.assertFalse('max_queues' in vendor_specific)
+        if nic_driver:
+            self.assertEqual(dpdk_interface['mtu'],
+                             consts.DEFAULT_MTU + consts.SIZE_OF_VLAN_TAG)
+
     def test_serialization_with_dpdk(self):
         self._check_dpdk_serializing()
 
@@ -206,6 +224,24 @@ class TestDeploymentAttributesSerialization90(
     def test_serialization_with_dpdk_vxlan_with_vlan_tag(self):
         self._create_cluster_with_vxlan()
         self._check_dpdk_serializing(has_vlan_tag=True)
+
+    def test_serialization_with_dpdk_with_i40e_driver(self):
+        driver = 'i40e'
+        dpdk_cpu_pinning = 4
+        self._check_dpdk_serializing(nic_driver=driver,
+                                     dpdk_cpu_pinning=dpdk_cpu_pinning)
+
+    def test_serialization_with_dpdk_queues_limited_max_queues(self):
+        max_queues = 2
+        dpdk_cpu_pinning = 4
+        self._check_dpdk_serializing(max_queues=max_queues,
+                                     dpdk_cpu_pinning=dpdk_cpu_pinning)
+
+    def test_serialization_with_dpdk_queues_limited_dpdk_cpu_pinning(self):
+        max_queues = 4
+        dpdk_cpu_pinning = 3
+        self._check_dpdk_serializing(max_queues=max_queues,
+                                     dpdk_cpu_pinning=dpdk_cpu_pinning)
 
     @mock.patch('nailgun.objects.Release.get_supported_dpdk_drivers')
     def _check_dpdk_bond_serializing(self, attributes, drivers_mock):
@@ -255,7 +291,8 @@ class TestDeploymentAttributesSerialization90(
         self.env.node_nics_put(node.id, interfaces)
 
         serialized_for_astute = self.serialize()
-        self.assertEqual(len(serialized_for_astute['nodes']), 1)
+        self.assertEqual(len(self._handle_facts(
+            serialized_for_astute['nodes'])), 1)
         serialized_node = serialized_for_astute['nodes'][0]
         dpdk = serialized_node.get('dpdk')
 
@@ -396,13 +433,73 @@ class TestDeploymentAttributesSerialization90(
         node_common_attrs = network_data['nodes'][node_name]
         self.assertFalse(node_common_attrs['nova_cpu_pinning_enabled'])
 
+    def test_pinning_cpu_for_nova(self):
+        numa_nodes = [
+            {'id': 0, 'memory': 2 ** 31, 'cpus': [1, 2, 3, 4]},
+            {'id': 1, 'memory': 2 ** 31, 'cpus': [5, 6, 7, 8]}
+        ]
+        node = self.env.create_node(
+            cluster_id=self.cluster_db.id,
+            roles=['compute'])
+
+        node.meta['numa_topology']['numa_nodes'] = numa_nodes
+        node.attributes.update({
+            'cpu_pinning': {
+                'nova': {'value': 2},
+            }
+        })
+        objects.Cluster.prepare_for_deployment(self.cluster_db)
+        serialized_for_astute = self.serializer.serialize(
+            self.cluster_db, self.cluster_db.nodes)
+
+        serialized_node = serialized_for_astute['nodes'][0]
+
+        self.assertNotIn('dpdk', serialized_node)
+        self.assertEqual(serialized_node['nova']['cpu_pinning'], [1, 2])
+        node_name = objects.Node.get_slave_name(node)
+        network_data = serialized_for_astute['common']['network_metadata']
+        node_common_attrs = network_data['nodes'][node_name]
+        self.assertTrue(node_common_attrs['nova_cpu_pinning_enabled'])
+
+    def test_attributes_override_core_mask(self):
+        numa_nodes = [
+            {'id': 0, 'memory': 2 ** 31, 'cpus': [1, 2, 3, 4]},
+            {'id': 1, 'memory': 2 ** 31, 'cpus': [5, 6, 7, 8]}
+        ]
+        node = self.env.create_nodes_w_interfaces_count(
+            1, 3,
+            cluster_id=self.cluster_db.id,
+            roles=['compute'])[0]
+
+        other_nic = node.interfaces[0]
+        dpdk_nic = node.interfaces[2]
+
+        self._assign_dpdk_to_nic(node, dpdk_nic, other_nic)
+
+        node.meta['numa_topology']['numa_nodes'] = numa_nodes
+        node.attributes.update({
+            'cpu_pinning': {
+                'nova': {'value': 2},
+                'dpdk': {'value': 2},
+            },
+            'dpdk': {
+                'ovs_pmd_core_mask': '0x3',
+                'ovs_core_mask': '0x1'
+            }
+        })
+        serialized_for_astute = self.serialize()
+        serialized_node = serialized_for_astute['nodes'][0]
+
+        self.assertEqual(serialized_node['dpdk']['ovs_core_mask'], '0x1')
+        self.assertEqual(serialized_node['dpdk']['ovs_pmd_core_mask'], '0x3')
+
     def test_dpdk_hugepages(self):
         numa_nodes = []
         for i in six.moves.range(3):
             numa_nodes.append({
                 'id': i,
                 'cpus': [i],
-                'memory': 1024 ** 3
+                'memory': 2 * 1024 ** 3
             })
 
         meta = {
@@ -415,17 +512,19 @@ class TestDeploymentAttributesSerialization90(
             cluster_id=self.cluster_db.id,
             roles=['compute'],
             meta=meta)
+        node.interfaces[0].attributes.get('dpdk', {}).get(
+            'enabled', {})['value'] = True
         node.attributes.update({
             'hugepages': {
                 'dpdk': {
-                    'value': 128},
+                    'value': 1024},
                 'nova': {
                     'value': {'2048': 1}}}}
         )
         serialized_for_astute = self.serialize()
         serialized_node = serialized_for_astute['nodes'][0]
         self.assertEquals(
-            [128, 128, 128],
+            [1024, 1024, 1024],
             serialized_node['dpdk']['ovs_socket_mem'])
         self.assertTrue(serialized_node['nova']['enable_hugepages'])
 
@@ -694,6 +793,9 @@ class TestDeploymentLCMSerialization90(
         self.node = self.env.create_node(
             cluster_id=self.cluster_db.id, roles=['compute']
         )
+        self.initialize_serrializer()
+
+    def initialize_serrializer(self):
         self.serializer = self.create_serializer(self.cluster_db)
 
     @classmethod
@@ -737,7 +839,60 @@ class TestDeploymentLCMSerialization90(
             serialized['nodes'][0]['configuration']
         )
 
+    def test_openstack_configuration_options_in_serialized(self):
+        conf_options = {
+            'apply_on_deploy': False
+        }
+        self.env.create_openstack_config(
+            cluster_id=self.cluster_db.id,
+            configuration={
+                'glance_config': 'value1',
+                'nova_config': 'value1',
+                'ceph_config': 'value1',
+                'configuration_options': conf_options
+            }
+        )
+        objects.Cluster.prepare_for_deployment(self.cluster_db)
+        serialized = self.serializer.serialize(self.cluster_db, [self.node])
+        node_info = serialized['nodes'][0]
+        self.assertIn('configuration', node_info)
+        self.assertIn('configuration_options', node_info)
+        self.assertNotIn('configuration_options', node_info['configuration'])
+        self.assertEqual(conf_options, node_info['configuration_options'])
+
     def test_cluster_attributes_in_serialized(self):
+        objects.Cluster.prepare_for_deployment(self.cluster_db)
+        serialized = self.serializer.serialize(self.cluster_db, [self.node])
+        release = self.cluster_db.release
+        release_info = {
+            'name': release.name,
+            'version': release.version,
+            'operating_system': release.operating_system,
+        }
+        cluster_info = {
+            "id": self.cluster_db.id,
+            "name": self.cluster_db.name,
+            "fuel_version": self.cluster_db.fuel_version,
+            "status": self.cluster_db.status,
+            "mode": self.cluster_db.mode
+        }
+        self.assertEqual(cluster_info, serialized['common']['cluster'])
+        self.assertEqual(release_info, serialized['common']['release'])
+
+        self.assertEqual(['compute'], serialized['nodes'][0]['roles'])
+        self.assertEqual(
+            [consts.TASK_ROLES.master], serialized['nodes'][1]['roles']
+        )
+
+    def test_inactive_cluster_attributes_in_serialized(self):
+        objects.OpenstackConfig.create({
+            "cluster_id": self.cluster_db.id,
+            "node_id": self.node.id,
+            "node_role": "ceph-osd",
+            "configuration": {},
+        })
+        objects.OpenstackConfig.disable_by_nodes([self.node])
+        self.initialize_serrializer()
         objects.Cluster.prepare_for_deployment(self.cluster_db)
         serialized = self.serializer.serialize(self.cluster_db, [self.node])
         release = self.cluster_db.release
@@ -768,7 +923,7 @@ class TestDeploymentLCMSerialization90(
     def test_plugins_in_serialized(self):
         releases = [
             {'repository_path': 'repositories/ubuntu',
-             'version': 'mitaka-9.0', 'os': 'ubuntu',
+             'version': self.env_version, 'os': 'ubuntu',
              'mode': ['ha', 'multinode'],
              'deployment_scripts_path': 'deployment_scripts/'}
         ]

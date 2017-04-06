@@ -860,7 +860,7 @@ class ClearTaskHistory(TaskManager):
                 TaskHelper.set_ready_if_not_finished(task)
 
         # clear tasks history
-        cluster_tasks = objects.TaskCollection.get_cluster_tasks(
+        cluster_tasks = objects.TransactionCollection.get_transactions(
             self.cluster.id
         )
         cluster_tasks.delete(synchronize_session='fetch')
@@ -904,18 +904,22 @@ class ResetEnvironmentTaskManager(ClearTaskHistory):
         db().add(supertask)
         al = TaskHelper.create_action_log(supertask)
 
+        reset_nodes = supertask.create_subtask(
+            consts.TASK_NAMES.reset_nodes
+        )
+
         remove_keys_task = supertask.create_subtask(
-            consts.TASK_NAMES.reset_environment
+            consts.TASK_NAMES.remove_keys
         )
 
         remove_ironic_bootstrap_task = supertask.create_subtask(
-            consts.TASK_NAMES.reset_environment
+            consts.TASK_NAMES.remove_ironic_bootstrap
         )
 
         db.commit()
 
         rpc.cast('naily', [
-            tasks.ResetEnvironmentTask.message(supertask),
+            tasks.ResetEnvironmentTask.message(reset_nodes),
             tasks.RemoveIronicBootstrap.message(remove_ironic_bootstrap_task),
             tasks.RemoveClusterKeys.message(remove_keys_task)
         ])
@@ -1249,7 +1253,7 @@ class NodeDeletionTaskManager(BaseDeploymentTaskManager):
         try:
             self.check_running_task()
         except errors.TaskAlreadyRunning:
-            raise errors.DeploymentAlreadyStarted(
+            raise errors.TaskAlreadyRunning(
                 'Cannot perform the actions because there are running tasks.'
             )
 

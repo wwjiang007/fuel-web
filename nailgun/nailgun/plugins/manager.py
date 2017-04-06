@@ -662,6 +662,8 @@ class PluginManager(object):
             plugin_adapter = wrap_plugin(plugin)
             metadata = plugin_adapter.get_metadata()
             Plugin.update(plugin, metadata)
+        except errors.InvalidData:
+            raise
         except Exception as e:
             logger.error("cannot update plugin {0} in DB. Reason: {1}"
                          .format(plugin.name, str(e)))
@@ -763,7 +765,7 @@ class PluginManager(object):
         :type plugin: plugin model
         :returns: boolean
         """
-        return ClusterPlugin.is_plugin_used(plugin.id)
+        return not ClusterPlugin.is_plugin_used(plugin.id)
 
     @classmethod
     def _get_specific_version(cls, versions, plugin_id):

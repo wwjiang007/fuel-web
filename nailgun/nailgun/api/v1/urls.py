@@ -44,9 +44,11 @@ from nailgun.api.v1.handlers.cluster import \
     ClusterReleaseDeploymentTasksHandler
 from nailgun.api.v1.handlers.cluster import ClusterResetHandler
 from nailgun.api.v1.handlers.cluster import ClusterStopDeploymentHandler
-from nailgun.api.v1.handlers.cluster import VmwareAttributesDefaultsHandler
-from nailgun.api.v1.handlers.cluster import VmwareAttributesHandler
 from nailgun.api.v1.handlers.component import ComponentCollectionHandler
+
+from nailgun.api.v1.handlers.removed import \
+    RemovedIn10VmwareAttributesDefaultsHandler
+from nailgun.api.v1.handlers.removed import RemovedIn10VmwareAttributesHandler
 
 from nailgun.api.v1.handlers.cluster_plugin_link \
     import ClusterPluginLinkCollectionHandler
@@ -86,6 +88,11 @@ from nailgun.api.v1.handlers.plugin_link import PluginLinkCollectionHandler
 from nailgun.api.v1.handlers.plugin_link import PluginLinkHandler
 
 from nailgun.api.v1.handlers.notifications import NotificationCollectionHandler
+from nailgun.api.v1.handlers.notifications import \
+    NotificationCollectionStatsHandler
+from nailgun.api.v1.handlers.notifications import \
+    NotificationStatusHandler
+
 from nailgun.api.v1.handlers.notifications import NotificationHandler
 
 from nailgun.api.v1.handlers.orchestrator import DefaultDeploymentInfo
@@ -266,9 +273,9 @@ urls = (
     NodeUnassignmentHandler,
 
     r'/clusters/(?P<cluster_id>\d+)/vmware_attributes/?$',
-    VmwareAttributesHandler,
+    RemovedIn10VmwareAttributesHandler,
     r'/clusters/(?P<cluster_id>\d+)/vmware_attributes/defaults/?$',
-    VmwareAttributesDefaultsHandler,
+    RemovedIn10VmwareAttributesDefaultsHandler,
 
     r'/clusters/(?P<cluster_id>\d+)/plugin_links/?$',
     ClusterPluginLinkCollectionHandler,
@@ -334,8 +341,12 @@ urls = (
 
     r'/notifications/?$',
     NotificationCollectionHandler,
+    r'/notifications/change_status/?$',
+    NotificationStatusHandler,
     r'/notifications/(?P<obj_id>\d+)/?$',
     NotificationHandler,
+    r'/notifications/stats/?$',
+    NotificationCollectionStatsHandler,
 
     r'/dump/(?P<snapshot_name>[A-Za-z0-9-_.]+)$',
     SnapshotDownloadHandler,

@@ -84,30 +84,76 @@ SECURITY_GROUPS = {
 DEFAULT_NIC_ATTRIBUTES = {
     'offloading': {
         'disable': {'type': 'checkbox', 'value': False,
-                    'weight': 10, 'label': 'Disable offloading'},
-        'modes': {'value': {}, 'type': 'offloading_modes',
-                  'description': 'Offloading modes', 'weight': 20,
-                  'label': 'Offloading modes'},
+                    'weight': 10, 'label': 'Disable Offloading'},
+        'modes': {'value': {}, 'type': 'offloading_modes', 'weight': 20,
+                  'label': 'Offloading Modes'},
         'metadata': {'weight': 10, 'label': 'Offloading'}
     },
     'mtu': {
         'value': {'type': 'number', 'value': None, 'weight': 10,
-                  'label': 'Use Custom MTU', 'nullable': True},
+                  'label': 'Use Custom MTU', 'nullable': True,
+                  'min': 42, 'max': 65536},
         'metadata': {'weight': 20, 'label': 'MTU'}
     },
     'sriov': {
-        'numvfs': {'min': 0, 'type': 'number', 'value': None,
-                   'weight': 20, 'label': 'Virtual functions'},
+        'numvfs': {'min': 1, 'type': 'number', 'value': None, 'nullable': True,
+                   'weight': 20, 'label': 'Custom Number of Virtual Functions',
+                   'restrictions': ['nic_attributes:sriov.enabled.value == "'
+                                    'false"']
+                   },
         'enabled': {'type': 'checkbox', 'value': False,
-                    'weight': 10, 'label': 'SR-IOV enabled'},
+                    'weight': 10, 'label': 'Enable SR-IOV',
+                    'description': 'Single-root I/O Virtualization (SR-IOV) '
+                                   'is a specification that, when implemented '
+                                   'by a physical PCIe device, enables it to '
+                                   'appear as multiple separate PCIe devices. '
+                                   'This enables multiple virtualized guests '
+                                   'to share direct access to the physical '
+                                   'device, offering improved performance '
+                                   'over an equivalent virtual device.',
+                    'restrictions': [{'settings:common.libvirt_type.value != '
+                                      '\'kvm\'': '"Only KVM hypervisor works '
+                                      'with SR-IOV"'}]},
         'physnet': {'type': 'text', 'value': '', 'weight': 30,
-                    'label': 'Physical network'},
+                    'label': 'Physical Network Name',
+                    'regex': {
+                        'source': '^[A-Za-z0-9 _]*[A-Za-z0-9][A-Za-z0-9 _]*$',
+                        'error': 'Invalid physical network name'
+                    },
+                    'restrictions': [
+                        'nic_attributes:sriov.enabled.value == false',
+                        {'condition': "nic_attributes:sriov.physnet.value "
+                                      "!= 'physnet2'",
+                         'message': 'Only "physnet2" will be configured by '
+                                    'Fuel in Neutron. Configuration of other '
+                                    'physical networks is up to Operator or '
+                                    'plugin. Fuel will just configure '
+                                    'appropriate pci_passthrough_whitelist '
+                                    'option in nova.conf for such interface '
+                                    'and physical networks.',
+                         'action': 'none'
+                         }
+                    ]},
         'metadata': {'weight': 30, 'label': 'SR-IOV'}
     },
     'dpdk': {
         'enabled': {'type': 'checkbox', 'value': False,
-                    'weight': 10, 'label': 'DPDK enabled'},
-        'metadata': {'weight': 40, 'label': 'DPDK'}
+                    'weight': 10, 'label': 'Enable DPDK',
+                    'description': 'The Data Plane Development Kit (DPDK) '
+                                   'provides high-performance packet '
+                                   'processing libraries and user space '
+                                   'drivers.',
+                    'restrictions': [
+                        {'settings:common.libvirt_type.value != \'kvm\'':
+                         'Only KVM hypervisor works with DPDK'}
+                    ]},
+        'metadata': {
+            'weight': 40, 'label': 'DPDK',
+            'restrictions': [{
+                'condition': "not ('experimental' in version:feature_groups)",
+                'action': "hide"
+            }]
+        }
     }
 }
 
@@ -124,15 +170,15 @@ DEFAULT_BOND_ATTRIBUTES = {
     },
     'offloading': {
         'disable': {'type': 'checkbox', 'weight': 10, 'value': False,
-                    'label': 'Disable offloading'},
+                    'label': 'Disable Offloading'},
         'modes': {'weight': 20, 'type': 'offloading_modes',
-                  'description': 'Offloading modes', 'value': {},
-                  'label': 'Offloading modes'},
+                  'value': {}, 'label': 'Offloading Modes'},
         'metadata': {'weight': 20, 'label': 'Offloading'}
     },
     'mtu': {
         'value': {'type': 'number', 'weight': 10, 'value': None,
-                  'label': 'Use Custom MTU', 'nullable': True},
+                  'label': 'Use Custom MTU', 'nullable': True,
+                  'min': 42, 'max': 65536},
         'metadata': {'weight': 30, 'label': 'MTU'}
     },
     'lacp': {
@@ -147,9 +193,23 @@ DEFAULT_BOND_ATTRIBUTES = {
     },
     'type__': {'type': 'hidden', 'value': None},
     'dpdk': {
-        'enabled': {'type': 'checkbox', 'weight': 10, 'value': None,
-                    'label': 'DPDK enabled'},
-        'metadata': {'weight': 40, 'label': 'DPDK'}
+        'enabled': {'type': 'checkbox', 'value': False,
+                    'weight': 10, 'label': 'Enable DPDK',
+                    'description': 'The Data Plane Development Kit (DPDK) '
+                                   'provides high-performance packet '
+                                   'processing libraries and user space '
+                                   'drivers.',
+                    'restrictions': [
+                        {'settings:common.libvirt_type.value != \'kvm\'':
+                         'Only KVM hypervisor works with DPDK'}
+                    ]},
+        'metadata': {
+            'weight': 40, 'label': 'DPDK',
+            'restrictions': [{
+                'condition': "not ('experimental' in version:feature_groups)",
+                'action': "hide"
+            }]
+        }
     }
 }
 
@@ -479,6 +539,32 @@ def prepare():
         }]
     )
 
+    db.execute(
+        meta.tables['plugins'].insert(),
+        [{
+            'name': 'test_tags',
+            'title': 'Test tags plugin',
+            'version': '2.0.0',
+            'description': 'Test plugin A for Fuel',
+            'homepage': 'http://fuel_plugins.test_plugin.com',
+            'package_version': '5.0.0',
+            'groups': jsonutils.dumps(['tgroup']),
+            'authors': jsonutils.dumps(['tauthor']),
+            'licenses': jsonutils.dumps(['tlicense']),
+            'releases': jsonutils.dumps([
+                {'repository_path': 'repositories/ubuntu'}
+            ]),
+            'deployment_tasks': jsonutils.dumps([]),
+            'fuel_version': jsonutils.dumps(['9.2']),
+            'network_roles_metadata': jsonutils.dumps([]),
+            'roles_metadata': jsonutils.dumps({
+                'plugin-tags-controller': {
+                    'name': 'Plugin Tags Controller',
+                },
+            }),
+        }]
+    )
+
     db.commit()
 
 
@@ -538,7 +624,7 @@ class TestAttributesUpdate(base.BaseAlembicMigrationTest):
         for attrs in results:
             attrs = jsonutils.loads(attrs[0])
             common = attrs.setdefault('editable', {}).setdefault('common', {})
-            self.assertEqual(common.get('security_groups'), None)
+            self.assertIsNone(common.get('security_groups'))
 
     def test_cluster_attributes_update(self):
         clusters_attributes = self.meta.tables['attributes']
@@ -568,7 +654,20 @@ class TestAttributesUpdate(base.BaseAlembicMigrationTest):
         for editable in results:
             editable = jsonutils.loads(editable[0])
             common = editable.setdefault('common', {})
-            self.assertEqual(common.get('security_groups'), None)
+            self.assertIsNone(common.get('security_groups'))
+
+    def test_upgrade_release_with_nic_attributes(self):
+        releases_table = self.meta.tables['releases']
+        result = db.execute(
+            sa.select([releases_table.c.nic_attributes,
+                       releases_table.c.bond_attributes],
+                      releases_table.c.id.in_(
+                          self.get_release_ids(RELEASE_VERSION)))
+        ).fetchone()
+        self.assertEqual(DEFAULT_NIC_ATTRIBUTES,
+                         jsonutils.loads(result['nic_attributes']))
+        self.assertEqual(DEFAULT_BOND_ATTRIBUTES,
+                         jsonutils.loads(result['bond_attributes']))
 
     def get_release_ids(self, start_version, available=True):
         """Get release ids
@@ -602,7 +701,7 @@ class TestTags(base.BaseAlembicMigrationTest):
         primary_tags = db.execute(query).fetchone()[0]
         self.assertItemsEqual(primary_tags, ['controller'])
 
-    def test_tags_meta_migration(self):
+    def test_tags_releases_meta_migration(self):
         releases = self.meta.tables['releases']
         query = sa.select([releases.c.roles_metadata,
                            releases.c.tags_metadata])
@@ -614,6 +713,21 @@ class TestTags(base.BaseAlembicMigrationTest):
                     tags_meta[role_name].get('has_primary', False),
                     role_meta.get('has_primary', False)
                 )
+                self.assertIn('tags', role_meta)
+
+    def test_tags_plugins_meta_migration(self):
+        plugins = self.meta.tables['plugins']
+        query = sa.select([plugins.c.roles_metadata,
+                           plugins.c.tags_metadata])
+        for roles_meta, tags_meta in db.execute(query):
+            tags_meta = jsonutils.loads(tags_meta)
+            for role_name, role_meta in six.iteritems(
+                    jsonutils.loads(roles_meta)):
+                self.assertEqual(
+                    tags_meta[role_name].get('has_primary', False),
+                    role_meta.get('has_primary', False)
+                )
+                self.assertIn('tags', role_meta)
 
     def test_tags_migration_for_supported_releases(self):
         releases = self.meta.tables['releases']
@@ -657,17 +771,6 @@ class TestTags(base.BaseAlembicMigrationTest):
 
 
 class TestNodeNICAndBondAttributesMigration(base.BaseAlembicMigrationTest):
-
-    def test_upgrade_release_with_nic_attributes(self):
-        releases_table = self.meta.tables['releases']
-        result = db.execute(
-            sa.select([releases_table.c.nic_attributes,
-                       releases_table.c.bond_attributes])
-        ).fetchone()
-        self.assertEqual(DEFAULT_NIC_ATTRIBUTES,
-                         jsonutils.loads(result['nic_attributes']))
-        self.assertEqual(DEFAULT_BOND_ATTRIBUTES,
-                         jsonutils.loads(result['bond_attributes']))
 
     def test_upgrade_node_nic_attributes_with_empty_properties(self):
         interfaces_table = self.meta.tables['node_nic_interfaces']
@@ -787,3 +890,54 @@ class TestNodeNICAndBondAttributesMigration(base.BaseAlembicMigrationTest):
         # self.assertNotIn('offloading_modes', bonds_table.c)
         # self.assertNotIn('interface_properties', bonds_table.c)
         # self.assertNotIn('bond_properties', bonds_table.c)
+
+
+class TestTransactionsNames(base.BaseAlembicMigrationTest):
+
+    def test_field_reset_environment_exist(self):
+        db.execute(
+            self.meta.tables['tasks'].insert(),
+            [
+                {
+                    'uuid': 'fake_task_uuid_0',
+                    'name': 'reset_environment',
+                    'status': 'pending'
+                }
+            ]
+        )
+
+    def test_field_reset_nodes_exist(self):
+        db.execute(
+            self.meta.tables['tasks'].insert(),
+            [
+                {
+                    'uuid': 'fake_task_uuid_0',
+                    'name': 'reset_nodes',
+                    'status': 'pending'
+                }
+            ]
+        )
+
+    def test_field_remove_keys_exist(self):
+        db.execute(
+            self.meta.tables['tasks'].insert(),
+            [
+                {
+                    'uuid': 'fake_task_uuid_0',
+                    'name': 'remove_keys',
+                    'status': 'pending'
+                }
+            ]
+        )
+
+    def test_field_remove_ironic_bootstrap_exist(self):
+        db.execute(
+            self.meta.tables['tasks'].insert(),
+            [
+                {
+                    'uuid': 'fake_task_uuid_0',
+                    'name': 'remove_ironic_bootstrap',
+                    'status': 'pending'
+                }
+            ]
+        )

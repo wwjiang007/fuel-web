@@ -16,12 +16,12 @@
 
 """Deployment serializers for orchestrator"""
 
-from copy import deepcopy
 from distutils.version import StrictVersion
 
 import six
 
 from nailgun import consts
+from nailgun.db import db
 from nailgun import extensions
 from nailgun.logger import logger
 from nailgun import objects
@@ -32,8 +32,6 @@ from nailgun.utils.resolvers import NameMatchingPolicy
 from nailgun.utils.resolvers import TagResolver
 
 from nailgun.orchestrator.base_serializers import MuranoMetadataSerializerMixin
-from nailgun.orchestrator.base_serializers import \
-    VmwareDeploymentSerializerMixin
 from nailgun.orchestrator.provisioning_serializers import \
     ProvisionLCMSerializer
 
@@ -223,6 +221,7 @@ class DeploymentMultinodeSerializer(object):
             'role': role,
             'vms_conf': node.vms_conf,
             'fail_if_error': role in self.critical_roles,
+            'ip': node.ip,
             # TODO(eli): need to remove, requried for the fake thread only
             'online': node.online,
         }
@@ -264,18 +263,6 @@ class DeploymentMultinodeSerializer(object):
         image_data['img_path'] = '{0}cirros-x86_64-disk.img'.format(img_dir)
 
         properties_data = {}
-
-        # Alternate VMWare specific values.
-        if c_attrs['editable']['common']['libvirt_type']['value'] == 'vcenter':
-            image_data.update({
-                'disk_format': 'vmdk',
-                'img_path': '{0}cirros-i386-disk.vmdk'.format(img_dir),
-            })
-            properties_data = {
-                'vmware_disktype': 'sparse',
-                'vmware_adaptertype': 'lsiLogic',
-                'hypervisor_type': 'vmware'
-            }
 
         # NOTE(aschultz): properties was added as part of N and should be
         # used infavor of glance_properties
@@ -425,8 +412,7 @@ class DeploymentHASerializer60(DeploymentHASerializer50):
         neutron_serializers.NeutronNetworkDeploymentSerializer60
 
 
-class DeploymentMultinodeSerializer61(DeploymentMultinodeSerializer,
-                                      VmwareDeploymentSerializerMixin):
+class DeploymentMultinodeSerializer61(DeploymentMultinodeSerializer):
 
     nova_network_serializer = \
         nova_serializers.NovaNetworkDeploymentSerializer61
@@ -437,7 +423,6 @@ class DeploymentMultinodeSerializer61(DeploymentMultinodeSerializer,
         base = super(DeploymentMultinodeSerializer61, self)
         serialized_node = base.serialize_node(node, role)
         serialized_node['user_node_name'] = node.name
-        serialized_node.update(self.generate_vmware_data(node))
 
         return serialized_node
 
@@ -450,8 +435,7 @@ class DeploymentMultinodeSerializer61(DeploymentMultinodeSerializer,
         return serialized_node
 
 
-class DeploymentHASerializer61(DeploymentHASerializer,
-                               VmwareDeploymentSerializerMixin):
+class DeploymentHASerializer61(DeploymentHASerializer):
 
     nova_network_serializer = \
         nova_serializers.NovaNetworkDeploymentSerializer61
@@ -462,7 +446,6 @@ class DeploymentHASerializer61(DeploymentHASerializer,
         base = super(DeploymentHASerializer61, self)
         serialized_node = base.serialize_node(node, role)
         serialized_node['user_node_name'] = node.name
-        serialized_node.update(self.generate_vmware_data(node))
 
         return serialized_node
 
@@ -473,49 +456,6 @@ class DeploymentHASerializer61(DeploymentHASerializer,
             cls).serialize_node_for_node_list(node, role)
         serialized_node['user_node_name'] = node.name
         return serialized_node
-
-    # Alternate VMWare specific values.
-    # FiXME(who): srogov
-    # This a temporary workaround to keep existing functioanality
-    # after fully implementation of the multi HV support and astute part
-    # for multiple images support, it is need to change
-    # dict image_data['test_vm_image'] to list of dicts
-    def generate_test_vm_image_data(self, node):
-        attrs = node.cluster.attributes
-        image_data = super(
-            DeploymentHASerializer61,
-            self).generate_test_vm_image_data(node)
-
-        images_data = {}
-        images_data['test_vm_image'] = []
-        if attrs.get('editable', {}).get('common', {}). \
-           get('use_vcenter', {}).get('value') is True:
-            image_vmdk_data = deepcopy(image_data['test_vm_image'])
-            img_path = image_vmdk_data['img_path']. \
-                replace('x86_64-disk.img', 'i386-disk.vmdk')
-            image_vmdk_data.update({
-                'img_name': 'TestVM-VMDK',
-                'disk_format': 'vmdk',
-                'img_path': img_path,
-            })
-            properties_data = {
-                'vmware_disktype': 'sparse',
-                'vmware_adaptertype': 'lsiLogic',
-                'hypervisor_type': 'vmware'
-            }
-            glance_properties = self.generate_properties_arguments(
-                properties_data)
-
-            # NOTE(aschultz): properties was added as part of N and should be
-            # used infavor of glance_properties
-            image_vmdk_data['glance_properties'] = glance_properties
-            image_vmdk_data['properties'] = properties_data
-            images_data['test_vm_image'].append(image_vmdk_data)
-            images_data['test_vm_image'].append(image_data['test_vm_image'])
-        else:
-            images_data = image_data
-
-        return images_data
 
 
 class DeploymentHASerializer70(DeploymentHASerializer61):
@@ -599,6 +539,10 @@ class DeploymentHASerializer90(DeploymentHASerializer80):
             cpu_pinning.pop('ovs_core_mask', []),
             cpu_pinning.pop('ovs_pmd_core_mask', [])
         )
+        # Allow user to override CPU distribution using attributes
+        if 'dpdk' in serialized_node:
+            serialized_node['dpdk'].update(objects.Node.get_attributes(node)
+                                           .get('dpdk', {}))
         serialized_node['cpu_pinning'] = cpu_pinning
 
     def generate_node_hugepages(self, node, serialized_node):
@@ -678,8 +622,9 @@ class DeploymentLCMSerializer(DeploymentHASerializer90):
     def initialize(self, cluster):
         super(DeploymentLCMSerializer, self).initialize(cluster)
         self._configs = sorted(
-            objects.OpenstackConfigCollection.filter_by(
-                None, cluster_id=cluster.id
+            objects.OpenstackConfigCollection.find_configs_for_nodes(
+                cluster,
+                cluster.nodes or [],
             ),
             key=lambda x: self._priorities[x.config_type]
         )
@@ -802,19 +747,38 @@ class DeploymentLCMSerializer(DeploymentHASerializer90):
 
     def inject_configs(self, node, output):
         node_config = output.setdefault('configuration', {})
+        node_config_opts = output.setdefault('configuration_options', {})
+
         for config in self._configs:
+            # OpenstackConfig.configuration is MutableDict, so we copy
+            # data for preventing changes in the DB
+            config_data = config.configuration.copy()
+            # TODO(akislitsky) refactor CLI and OpenstackConfig object
+            # to allow serialize arbitrary data. Old configs data should be
+            # modified to the structure {'configuration': old_configuration}.
+            # Then new config data will have the structure:
+            # {'configuration': old_configuration,
+            #  'configuration_options': ...,
+            #  'any_key': any_value
+            # }
+            # and new structure will be serialized to the node config.
+            config_data_opts = config_data.pop('configuration_options', {})
             if config.config_type == consts.OPENSTACK_CONFIG_TYPES.cluster:
-                utils.dict_update(node_config, config.configuration, 1)
+                utils.dict_update(node_config, config_data, 1)
+                utils.dict_update(node_config_opts, config_data_opts, 1)
             elif config.config_type == consts.OPENSTACK_CONFIG_TYPES.role:
                 # (asaprykin): objects.Node.all_roles() has a side effect,
                 # it replaces "<rolename>" with "primary-<rolename>"
                 # in case of primary role.
                 for role in node.all_roles:
                     if NameMatchingPolicy.create(config.node_role).match(role):
-                        utils.dict_update(node_config, config.configuration, 1)
+                        utils.dict_update(node_config, config_data, 1)
+                        utils.dict_update(node_config_opts,
+                                          config_data_opts, 1)
             elif config.config_type == consts.OPENSTACK_CONFIG_TYPES.node:
                 if config.node_id == node.id:
-                    utils.dict_update(node_config, config.configuration, 1)
+                    utils.dict_update(node_config, config_data, 1)
+                    utils.dict_update(node_config_opts, config_data_opts, 1)
 
     def inject_provision_info(self, node, data):
         # TODO(bgaifullin) serialize_node_info should be reworked
@@ -843,6 +807,26 @@ class DeploymentLCMSerializer(DeploymentHASerializer90):
                 k: v.get('value') for k, v in six.iteritems(section_attributes)
             }
         return serialized_node
+
+
+class DeploymentLCMSerializer100(DeploymentLCMSerializer):
+
+    @classmethod
+    def get_net_provider_serializer(cls, cluster):
+        if cluster.network_config.configuration_template:
+            return neutron_serializers.NeutronNetworkTemplateSerializer100
+        else:
+            return neutron_serializers.NeutronNetworkDeploymentSerializer100
+
+
+class DeploymentLCMSerializer110(DeploymentLCMSerializer100):
+
+    @classmethod
+    def get_net_provider_serializer(cls, cluster):
+        if cluster.network_config.configuration_template:
+            return neutron_serializers.NeutronNetworkTemplateSerializer110
+        else:
+            return neutron_serializers.NeutronNetworkDeploymentSerializer110
 
 
 def get_serializer_for_cluster(cluster):
@@ -886,7 +870,7 @@ def get_serializer_for_cluster(cluster):
             return serializers[env_mode]
 
     # return latest serializer by default
-    latest_version = max(serializers_map, key=lambda v: StrictVersion(v))
+    latest_version = max(serializers_map.keys(), key=StrictVersion)
 
     return serializers_map[latest_version][env_mode]
 
@@ -899,6 +883,10 @@ def _invoke_serializer(serializer, cluster, nodes,
         )
 
     objects.Cluster.set_primary_tags(cluster, nodes)
+    # commit the transaction immediately so that the updates
+    # made to nodes don't lock other updates to these nodes
+    # until this, possibly very long, transation ends.
+    db().commit()
     return serializer.serialize(
         cluster, nodes,
         ignore_customized=ignore_customized, skip_extensions=skip_extensions
@@ -917,8 +905,20 @@ def serialize(orchestrator_graph, cluster, nodes,
 
 def serialize_for_lcm(cluster, nodes,
                       ignore_customized=False, skip_extensions=False):
+    serializers_map = {
+        'default': DeploymentLCMSerializer,
+        '10.0': DeploymentLCMSerializer100,
+        '11.0': DeploymentLCMSerializer110,
+    }
+
+    serializer_lcm = serializers_map['default']
+    for version, serializer in six.iteritems(serializers_map):
+        if cluster.release.environment_version.startswith(version):
+            serializer_lcm = serializer
+            break
+
     return _invoke_serializer(
-        DeploymentLCMSerializer(), cluster, nodes,
+        serializer_lcm(), cluster, nodes,
         ignore_customized, skip_extensions
     )
 

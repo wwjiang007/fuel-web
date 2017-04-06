@@ -264,7 +264,8 @@ class TestHandlers(BaseIntegrationTest):
                      'pci_id': '1234:5678'
                  },
                  'pci_id': '8765:4321',
-                 'numa_node': 1
+                 'numa_node': 1,
+                 'max_queues': 2
              }}]
         )
         node_data = {'mac': node['mac'], 'meta': new_meta, 'is_agent': True}
@@ -312,9 +313,10 @@ class TestHandlers(BaseIntegrationTest):
                     }]
                 },
                 'numvfs': {
-                    'label': 'Number of Virtual Functions',
+                    'label': 'Custom Number of Virtual Functions',
                     'weight': 20,
                     'type': 'number',
+                    'nullable': True,
                     'min': 1,
                     'value': None,
                     'restrictions': [
@@ -349,6 +351,8 @@ class TestHandlers(BaseIntegrationTest):
             })
         self.assertEqual(
             resp_nic['meta']['dpdk'], {'available': False})
+        self.assertEqual(
+            resp_nic['meta']['max_queues'], 2)
 
     def create_cluster_and_node_with_dpdk_support(self, segment_type,
                                                   drivers_mock):
@@ -394,7 +398,12 @@ class TestHandlers(BaseIntegrationTest):
             {
                 'metadata': {
                     'label': 'DPDK',
-                    'weight': 40
+                    'weight': 40,
+                    'restrictions': [{
+                        'condition':
+                            "not ('experimental' in version:feature_groups)",
+                        'action': "hide"
+                    }]
                 },
                 'enabled': {
                     'label': 'Enable DPDK',
@@ -1253,9 +1262,10 @@ class TestNICAttributesHandlers(BaseIntegrationTest):
                 }]
             },
             'numvfs': {
-                'label': 'Number of Virtual Functions',
+                'label': 'Custom Number of Virtual Functions',
                 'weight': 20,
                 'type': 'number',
+                'nullable': True,
                 'min': 1,
                 'value': None,
                 'restrictions': [
@@ -1291,7 +1301,12 @@ class TestNICAttributesHandlers(BaseIntegrationTest):
         'dpdk': {
             'metadata': {
                 'label': 'DPDK',
-                'weight': 40
+                'weight': 40,
+                'restrictions': [{
+                    'condition':
+                        "not ('experimental' in version:feature_groups)",
+                    'action': "hide"
+                }]
             },
             'enabled': {
                 'label': 'Enable DPDK',
